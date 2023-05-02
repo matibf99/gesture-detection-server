@@ -6,10 +6,32 @@ Este proyecto es un servidor creado con Flask que utiliza OpenCV y Mediapipe par
 
 Antes de poder utilizar este servidor, necesitará tener instalado lo siguiente:
 - Python 3.8
-- Flask 2.0.1 o superior
-- OpenCV 4.5.3 o superior
-- Mediapipe 0.8.7 o superior
+- Flask 2.3.
+- OpenCV 4.7.0.72
+- Mediapipe 0.9.3.0
+
 Además, se recomienda el uso de una cámara web para probar el servidor.
+
+## Configurar la fuente de imágenes para el proyecto
+
+Para usar este proyecto, es necesario configurar la variable 'IMG_SOURCE' en el archivo .env. Hay dos opciones para hacerlo:
+
+- Si desea usar una webcam, escriba 'camera:///' seguido del índice de la cámara. Por ejemplo, 'camera:///0' para usar la primera cámara disponible.
+- Si desea usar una URL para obtener imágenes, escriba 'url:///' seguido de la URL de la imagen. Por ejemplo, 'url:///http://example.com/image' para usar la imagen en la URL especificada.
+
+Por ejemplo, si se quiere utilizar como fuente de imágenes la primera cámara disponible:
+
+```bash
+# .env
+IMG_SOURCE=camera:///0
+```
+
+Si desea utilizar una URL en su lugar, puede configurar la variable de la siguiente manera:
+
+```bash
+# .env
+IMG_SOURCE=url:///http://example.com/image
+```
 
 ## Uso
 
@@ -26,6 +48,8 @@ Para utilizar este servidor, siga los siguientes pasos:
 ```bash
 pip install -r requirements.txt
 ```
+
+4. Configurar las variables de entorno como se explica en el apartado *'Configurar la fuente de imágenes para el proyecto'*.
 
 3. Ejecute el servidor:
 

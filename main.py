@@ -1,3 +1,4 @@
+import os
 import threading
 import cv2
 
@@ -7,7 +8,8 @@ from image_processor import ImageProcessor
 
 
 app = Flask(__name__)
-image_processor = ImageProcessor()
+img_source = os.environ.get('IMG_SOURCE', "camera:///0")
+image_processor = ImageProcessor(img_source)
 
 
 def gen_frames():  # generate frame by frame from camera

@@ -39,3 +39,6 @@ class LandmarkPoints:
     # Right eyebrow
     RIGHT_EYEBROW_UPPER_MIDPOINT = RIGHT_EYEBROW[2]
     RIGHT_EYEBROW_LOWER_MIDPOINT = RIGHT_EYEBROW[7]
+
+    # Nose
+    NOSE_POINT = 1

@@ -20,58 +20,6 @@ face_mesh = mp_face_mesh.FaceMesh(min_detection_confidence=0.5, min_tracking_con
                                   refine_landmarks=True)
 
 
-def blink_ratio(landmarks, is_right_eye):
-    if is_right_eye:
-        h_left = landmarks[LandmarkPoints.RIGHT_EYE_HORIZONTAL_LEFT]
-        h_right = landmarks[LandmarkPoints.RIGHT_EYE_HORIZONTAL_RIGHT]
-        v_top = landmarks[LandmarkPoints.RIGHT_EYE_VERTICAL_TOP]
-        v_bottom = landmarks[LandmarkPoints.RIGHT_EYE_VERTICAL_BOTTOM]
-    else:
-        h_left = landmarks[LandmarkPoints.LEFT_EYE_HORIZONTAL_LEFT]
-        h_right = landmarks[LandmarkPoints.LEFT_EYE_HORIZONTAL_RIGHT]
-        v_top = landmarks[LandmarkPoints.LEFT_EYE_VERTICAL_TOP]
-        v_bottom = landmarks[LandmarkPoints.LEFT_EYE_VERTICAL_BOTTOM]
-
-        # Finding distance between horizontal and vertical points
-    h_distance = euclidean_distance(h_left, h_right)
-    v_distance = euclidean_distance(v_top, v_bottom)
-
-    # Finding ratio - horizontal_distance / vertical_distance
-    if v_distance > 0:
-        ratio = h_distance / v_distance
-    else:
-        ratio = -1
-
-    return ratio
-
-
-def mouth_ratio(landmarks):
-    # Calculate mouth height and width
-    mouth_height = euclidean_distance(landmarks[LandmarkPoints.UPPER_LIPS_TOP],
-                                      landmarks[LandmarkPoints.LOWER_LIPS_BOTTOM])
-    mouth_width = euclidean_distance(landmarks[LandmarkPoints.LIP_LEFT], landmarks[LandmarkPoints.LIP_RIGHT])
-
-    if mouth_height > 0:
-        ratio = mouth_width / mouth_height
-    else:
-        ratio = -1
-
-    return ratio
-
-
-def raised_eyebrows(landmarks):
-    left_eyebrow_to_eye_distance = euclidean_distance(landmarks[LandmarkPoints.LEFT_EYE_VERTICAL_TOP],
-                                                      landmarks[LandmarkPoints.LEFT_EYEBROW_LOWER_MIDPOINT])
-
-    right_eyebrow_to_eye_distance = euclidean_distance(landmarks[LandmarkPoints.RIGHT_EYE_VERTICAL_TOP],
-                                                       landmarks[LandmarkPoints.RIGHT_EYEBROW_LOWER_MIDPOINT])
-
-    #print(str(left_eyebrow_to_eye_distance) + " and " + str(right_eyebrow_to_eye_distance))
-    threshold = 25
-
-    return left_eyebrow_to_eye_distance > threshold or right_eyebrow_to_eye_distance > threshold
-
-
 def landmark_detection(img, results, draw=False):
     img_height, img_width = img.shape[:2]
 
@@ -82,7 +30,6 @@ def landmark_detection(img, results, draw=False):
     if draw:
         [cv2.circle(img, p, 2, Colors.GREEN, -1) for p in mesh_coord]
 
-    # returning the list of tuples for each landmark
     return mesh_coord
 
 
@@ -96,25 +43,33 @@ class ImageProcessor:
         self.queue_gestures = queue_gestures
         self.gestures_dict = {
             'left_eye': {
-                'last_closed': 0,
-                'closed': False,
+                'last': 0,
+                'previous_detected': False,
+                'detected': False,
+                'ratio': 0,
                 'sent': False,
             },
             'right_eye': {
-                'last_closed': 0,
-                'closed': False,
+                'last': 0,
+                'previous_detected': False,
+                'detected': False,
+                'ratio': 0,
                 'sent': False,
             },
             'eyebrows': {
-                'last_raised': 0,
-                'raised': False,
+                'last': 0,
+                'previous_detected': False,
+                'detected': False,
+                'ratio': 0,
                 'sent': False,
             },
-            'mouth': {
-                'last_opened': 0,
-                'open': False,
+            'mouth_open': {
+                'last': 0,
+                'previous_detected': False,
+                'detected': False,
+                'ratio': 0,
                 'sent': False,
-            }
+            },
         }
 
         if img_source.startswith('camera:///'):
@@ -150,8 +105,6 @@ class ImageProcessor:
         # Get the current frame from the ESP32-CAM
         img_resp = urllib.request.urlopen(self.url)
 
-        print('url')
-
         # Read the current frame using numpy and opencv
         imgnp = np.array(bytearray(img_resp.read()), dtype=np.uint8)
         image = cv2.imdecode(imgnp, -1)
@@ -175,56 +128,41 @@ class ImageProcessor:
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
         if results.multi_face_landmarks:
-            mesh_coords = landmark_detection(image, results, False)
-            # image = fillPolyTrans(image, [mesh_coords[p] for p in LandmarkPoints.FACE_OVAL], Colors.WHITE, opacity=0.4)
-            image = fill_poly_trans(image, [mesh_coords[p] for p in LandmarkPoints.LEFT_EYE], Colors.GREEN,
-                                    opacity=0.4)
-            image = fill_poly_trans(image, [mesh_coords[p] for p in LandmarkPoints.RIGHT_EYE], Colors.RED,
-                                    opacity=0.4)
-            image = fill_poly_trans(image, [mesh_coords[p] for p in LandmarkPoints.LEFT_EYEBROW], Colors.ORANGE,
-                                    opacity=0.4)
-            image = fill_poly_trans(image, [mesh_coords[p] for p in LandmarkPoints.RIGHT_EYEBROW], Colors.ORANGE,
-                                    opacity=0.4)
-            image = fill_poly_trans(image, [mesh_coords[p] for p in LandmarkPoints.LIPS], Colors.BLACK, opacity=0.3)
+            mesh_cords = landmark_detection(image, results)
+            image = self.__draw_landmarks(image, mesh_cords)
 
-            left_eye_ratio = blink_ratio(mesh_coords, is_right_eye=False)
-            right_eye_ratio = blink_ratio(mesh_coords, is_right_eye=True)
+            self.__blink_left_eye(mesh_cords)
+            self.__blink_right_eye(mesh_cords)
+            self.__mouth_open(mesh_cords)
+            self.__raised_eyebrows(mesh_cords)
 
-            left_eye_closed = left_eye_ratio > 5.5
-            right_eye_closed = right_eye_ratio > 5.5
+            self.__detect_and_print_text_gesture(image=image,
+                                                 gesture_name='LE-Blink',
+                                                 gesture_dict=self.gestures_dict['left_eye'],
+                                                 topic="gesture/left_eye",
+                                                 x_pos=20, y_pos=110,
+                                                 text_color=Colors.GREEN)
 
-            cv2.putText(image, f'L-Blink: {round(left_eye_ratio, 2)}', (20, 110), cv2.FONT_HERSHEY_SIMPLEX, 1.2,
-                        Colors.GREEN, 2)
-            cv2.putText(image, f'R-Blink: {round(right_eye_ratio, 2)}', (20, 150), cv2.FONT_HERSHEY_SIMPLEX, 1.2,
-                        Colors.RED, 2)
+            self.__detect_and_print_text_gesture(image=image,
+                                                 gesture_name='RE-Blink',
+                                                 gesture_dict=self.gestures_dict['right_eye'],
+                                                 topic="gesture/right_eye",
+                                                 x_pos=20, y_pos=150,
+                                                 text_color=Colors.GREEN)
 
-            cv2.putText(image, f'L-Closed' if left_eye_closed else f'L-Open', (20, 190), cv2.FONT_HERSHEY_SIMPLEX,
-                        1.2, Colors.GREEN, 2)
-            cv2.putText(image, f'R-Closed' if right_eye_closed else f'R-Open', (20, 230), cv2.FONT_HERSHEY_SIMPLEX,
-                        1.2, Colors.RED, 2)
-            cv2.putText(image, f'Eyes closed' if (right_eye_closed and left_eye_closed) else f'Eyes open',
-                        (20, 270), cv2.FONT_HERSHEY_SIMPLEX, 1.2, Colors.YELLOW, 2)
+            self.__detect_and_print_text_gesture(image=image,
+                                                 gesture_name='M-Open',
+                                                 gesture_dict=self.gestures_dict['mouth_open'],
+                                                 topic="gesture/mouth_open",
+                                                 x_pos=20, y_pos=190,
+                                                 text_color=Colors.RED)
 
-            m_ratio = mouth_ratio(mesh_coords)
-
-            mouth_open = m_ratio < 2
-            cv2.putText(image, f'Mouth: {round(m_ratio, 2)}', (20, 310), cv2.FONT_HERSHEY_SIMPLEX, 1.2,
-                        Colors.PINK, 2)
-            cv2.putText(image, f'M-Open' if mouth_open else f'M-Closed', (20, 350), cv2.FONT_HERSHEY_SIMPLEX, 1.2,
-                        Colors.PINK, 2)
-
-            eyebrows_raised = raised_eyebrows(mesh_coords)
-
-            cv2.putText(image, f'EB-Raised' if eyebrows_raised else f'EB-Not raised', (20, 390), cv2.FONT_HERSHEY_SIMPLEX, 1.2,
-                        Colors.PURPLE, 2)
-
-            # colorBackgroundText(image,  f'L-Blink: {round(left_eye_ratio,2)}', cv2.FONT_HERSHEY_SIMPLEX, 1.2, (20, 100), 2, Colors.YELLOW, pad_x=6, pad_y=6)
-            # colorBackgroundText(image,  f'R-Blink: {round(right_eye_ratio,2)}', cv2.FONT_HERSHEY_SIMPLEX, 1.2, (20, 130), 2, Colors.YELLOW, pad_x=6, pad_y=6)
-
-            self.__send_gestures(left_eye_closed=left_eye_closed,
-                                 right_eye_closed=right_eye_closed,
-                                 mouth_open=mouth_open,
-                                 eyebrows_raised=eyebrows_raised)
+            self.__detect_and_print_text_gesture(image=image,
+                                                 gesture_name='EB-Raised',
+                                                 gesture_dict=self.gestures_dict['eyebrows'],
+                                                 topic="gesture/eyebrows_raised",
+                                                 x_pos=20, y_pos=230,
+                                                 text_color=Colors.PURPLE)
 
         # Get the end time and calculate the total time
         end_time = time.time()
@@ -237,82 +175,99 @@ class ImageProcessor:
 
         return image
 
-    def __send_gestures(self, left_eye_closed, right_eye_closed, mouth_open, eyebrows_raised):
-        # Detect mouth gesture
-        if mouth_open != self.gestures_dict['mouth']['open']:
-            self.gestures_dict['mouth']['open'] = mouth_open
-            self.gestures_dict['mouth']['last_opened'] = time.time()
+    def __draw_landmarks(self, image, mesh_cords):
+        # image = fillPolyTrans(image, [mesh_cords[p] for p in LandmarkPoints.FACE_OVAL], Colors.WHITE, opacity=0.4)
+        image = fill_poly_trans(image, [mesh_cords[p] for p in LandmarkPoints.LEFT_EYE], Colors.GREEN, opacity=0.4)
+        image = fill_poly_trans(image, [mesh_cords[p] for p in LandmarkPoints.RIGHT_EYE], Colors.RED, opacity=0.4)
+        image = fill_poly_trans(image, [mesh_cords[p] for p in LandmarkPoints.LEFT_EYEBROW], Colors.ORANGE, opacity=0.4)
+        image = fill_poly_trans(image, [mesh_cords[p] for p in LandmarkPoints.RIGHT_EYEBROW], Colors.ORANGE, opacity=0.4)
+        image = fill_poly_trans(image, [mesh_cords[p] for p in LandmarkPoints.LIPS], Colors.BLACK, opacity=0.3)
+        # cv2.circle(image, mesh_cords[LandmarkPoints.NOSE_POINT], 2, Colors.WHITE, -1)
 
-            if self.gestures_dict['mouth']['sent']:
-                message = MqttMessage(topic='gesture/mouth', payload="0")
+        return image
+
+    def __detect_and_print_text_gesture(self, image, gesture_name, gesture_dict, topic, x_pos, y_pos,
+                                        text_color=Colors.BLACK):
+        cv2.putText(image, f'{gesture_name} - Y - {round(gesture_dict["ratio"], 2)}' if gesture_dict["detected"]
+                    else f'{gesture_name} - N - {round(gesture_dict["ratio"], 2)}', (x_pos, y_pos),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, text_color, 2)
+
+        if gesture_dict['detected'] != gesture_dict['previous_detected']:
+            gesture_dict['previous_detected'] = gesture_dict['detected']
+            gesture_dict['last'] = time.time()
+
+            if gesture_dict['sent']:
+                message = MqttMessage(topic=topic, payload="0")
                 self.queue_gestures.put_nowait(message)
 
-            self.gestures_dict['mouth']['sent'] = False
-
-        # Detect left eye gesture
-        if left_eye_closed != self.gestures_dict['left_eye']['closed']:
-            self.gestures_dict['left_eye']['closed'] = left_eye_closed
-            self.gestures_dict['left_eye']['last_closed'] = time.time()
-
-            if self.gestures_dict['left_eye']['sent']:
-                message = MqttMessage(topic='gesture/left_eye', payload="0")
-                self.queue_gestures.put_nowait(message)
-
-            self.gestures_dict['left_eye']['sent'] = False
-
-        # Detect right eye gesture
-        if right_eye_closed != self.gestures_dict['right_eye']['closed']:
-            self.gestures_dict['right_eye']['closed'] = right_eye_closed
-            self.gestures_dict['right_eye']['last_closed'] = time.time()
-
-            if self.gestures_dict['right_eye']['sent']:
-                message = MqttMessage(topic='gesture/right_eye', payload="0")
-                self.queue_gestures.put_nowait(message)
-
-            self.gestures_dict['right_eye']['sent'] = False
-
-        # Detect eyebrows raised gesture
-        if eyebrows_raised != self.gestures_dict['eyebrows']['raised']:
-            self.gestures_dict['eyebrows']['raised'] = eyebrows_raised
-            self.gestures_dict['eyebrows']['last_raised'] = time.time()
-
-            if self.gestures_dict['eyebrows']['sent']:
-                message = MqttMessage(topic='gesture/eyebrows', payload="0")
-                self.queue_gestures.put_nowait(message)
-
-            self.gestures_dict['eyebrows']['sent'] = False
+            gesture_dict['sent'] = False
 
         # Calculate time since gesture started
         actual_time = time.time()
-        elapsed_time_left_eye = actual_time - self.gestures_dict['left_eye']['last_closed']
-        elapsed_time_right_eye = actual_time - self.gestures_dict['right_eye']['last_closed']
-        elapsed_time_mouth = actual_time - self.gestures_dict['mouth']['last_opened']
-        elapsed_time_eyebrows_raised = actual_time - self.gestures_dict['eyebrows']['last_raised']
+        elapsed_time = actual_time - gesture_dict['last']
+
+        # if 1 < elapsed_time < 1000 and gesture_dict['detected']:
+        #    print(gesture_name + " -1 " + str(elapsed_time))
 
         # Detect if enough time has passed for mouth gesture
-        if elapsed_time_mouth >= 1 and self.gestures_dict['mouth']['open'] and not self.gestures_dict['mouth']['sent']:
-            self.gestures_dict['mouth']['sent'] = True
-            message = MqttMessage(topic='gesture/mouth', payload="1")
+        if elapsed_time >= 1 and gesture_dict['detected'] and not gesture_dict['sent']:
+            gesture_dict['sent'] = True
+            message = MqttMessage(topic=topic, payload="1")
             self.queue_gestures.put_nowait(message)
 
-        # Detect if enough time has passed for left eye gesture
-        if elapsed_time_left_eye >= 1 and self.gestures_dict['left_eye']['closed'] \
-                and not self.gestures_dict['left_eye']['sent']:
-            self.gestures_dict['left_eye']['sent'] = True
-            message = MqttMessage(topic='gesture/left_eye', payload="1")
-            self.queue_gestures.put_nowait(message)
+    def __blink(self, landmarks, is_right_eye):
+        if is_right_eye:
+            h_left = landmarks[LandmarkPoints.RIGHT_EYE_HORIZONTAL_LEFT]
+            h_right = landmarks[LandmarkPoints.RIGHT_EYE_HORIZONTAL_RIGHT]
+            v_top = landmarks[LandmarkPoints.RIGHT_EYE_VERTICAL_TOP]
+            v_bottom = landmarks[LandmarkPoints.RIGHT_EYE_VERTICAL_BOTTOM]
+        else:
+            h_left = landmarks[LandmarkPoints.LEFT_EYE_HORIZONTAL_LEFT]
+            h_right = landmarks[LandmarkPoints.LEFT_EYE_HORIZONTAL_RIGHT]
+            v_top = landmarks[LandmarkPoints.LEFT_EYE_VERTICAL_TOP]
+            v_bottom = landmarks[LandmarkPoints.LEFT_EYE_VERTICAL_BOTTOM]
 
-        # Detect if enough time has passed for right eye gesture
-        # print(self.gestures_dict['right_eye'])
-        if elapsed_time_right_eye >= 1 and self.gestures_dict['right_eye']['closed'] \
-                and not self.gestures_dict['right_eye']['sent']:
-            self.gestures_dict['right_eye']['sent'] = True
-            message = MqttMessage(topic='gesture/right_eye', payload="1")
-            self.queue_gestures.put_nowait(message)
+            # Finding distance between horizontal and vertical points
+        h_distance = euclidean_distance(h_left, h_right)
+        v_distance = euclidean_distance(v_top, v_bottom)
 
-        # Detect if enough time has passed for eyebrows gesture
-        if elapsed_time_eyebrows_raised >= 1 and self.gestures_dict['eyebrows']['raised'] \
-                and not self.gestures_dict['eyebrows']['sent']:
-            self.gestures_dict['eyebrows']['sent'] = True
-            message = MqttMessage(topic='gesture/eyebrows', payload="1")
-            self.queue_gestures.put_nowait(message)
+        # Finding ratio - horizontal_distance / vertical_distance
+        if v_distance > 0:
+            ratio = h_distance / v_distance
+        else:
+            ratio = -1
+
+        self.gestures_dict['right_eye' if is_right_eye else 'left_eye']['detected'] = ratio > 8
+        self.gestures_dict['right_eye' if is_right_eye else 'left_eye']['ratio'] = ratio
+
+    def __blink_left_eye(self, landmarks):
+        self.__blink(landmarks, is_right_eye=False)
+
+    def __blink_right_eye(self, landmarks):
+        self.__blink(landmarks, is_right_eye=True)
+
+    def __mouth_open(self, landmarks):
+        mouth_height = euclidean_distance(landmarks[LandmarkPoints.UPPER_LIPS_TOP],
+                                          landmarks[LandmarkPoints.LOWER_LIPS_BOTTOM])
+        mouth_width = euclidean_distance(landmarks[LandmarkPoints.LIP_LEFT], landmarks[LandmarkPoints.LIP_RIGHT])
+
+        if mouth_height > 0:
+            ratio = mouth_width / mouth_height
+        else:
+            ratio = -1
+
+        self.gestures_dict['mouth_open']['detected'] = ratio < 2
+        self.gestures_dict['mouth_open']['ratio'] = ratio
+
+    def __raised_eyebrows(self, landmarks):
+        left_eyebrow_to_eye_distance = euclidean_distance(landmarks[LandmarkPoints.LEFT_EYE_VERTICAL_TOP],
+                                                          landmarks[LandmarkPoints.LEFT_EYEBROW_LOWER_MIDPOINT])
+
+        right_eyebrow_to_eye_distance = euclidean_distance(landmarks[LandmarkPoints.RIGHT_EYE_VERTICAL_TOP],
+                                                           landmarks[LandmarkPoints.RIGHT_EYEBROW_LOWER_MIDPOINT])
+
+        threshold = 25
+
+        self.gestures_dict['eyebrows']['detected'] = left_eyebrow_to_eye_distance > threshold or \
+                                                     right_eyebrow_to_eye_distance > threshold
+        self.gestures_dict['eyebrows']['ratio'] = max(left_eyebrow_to_eye_distance, right_eyebrow_to_eye_distance)

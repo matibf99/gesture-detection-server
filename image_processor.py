@@ -56,7 +56,7 @@ class ImageProcessor:
                 'ratio': 0,
                 'sent': False,
             },
-            'eyebrows': {
+            'eyebrows_raised': {
                 'last': 0,
                 'previous_detected': False,
                 'detected': False,
@@ -70,6 +70,20 @@ class ImageProcessor:
                 'ratio': 0,
                 'sent': False,
             },
+            'mouth_right': {
+                'last': 0,
+                'previous_detected': False,
+                'detected': False,
+                'ratio': 0,
+                'sent': False,
+            },
+            'mouth_left': {
+                'last': 0,
+                'previous_detected': False,
+                'detected': False,
+                'ratio': 0,
+                'sent': False,
+            }
         }
 
         if img_source.startswith('camera:///'):
@@ -133,8 +147,10 @@ class ImageProcessor:
 
             self.__blink_left_eye(mesh_cords)
             self.__blink_right_eye(mesh_cords)
-            self.__mouth_open(mesh_cords)
             self.__raised_eyebrows(mesh_cords)
+            self.__mouth_open(mesh_cords)
+            self.__mouth_left(mesh_cords)
+            self.__mouth_right(mesh_cords)
 
             self.__detect_and_print_text_gesture(image=image,
                                                  gesture_name='LE-Blink',
@@ -151,18 +167,32 @@ class ImageProcessor:
                                                  text_color=Colors.GREEN)
 
             self.__detect_and_print_text_gesture(image=image,
+                                                 gesture_name='EB-Raised',
+                                                 gesture_dict=self.gestures_dict['eyebrows_raised'],
+                                                 topic="gesture/eyebrows_raised",
+                                                 x_pos=20, y_pos=190,
+                                                 text_color=Colors.PURPLE)
+
+            self.__detect_and_print_text_gesture(image=image,
                                                  gesture_name='M-Open',
                                                  gesture_dict=self.gestures_dict['mouth_open'],
                                                  topic="gesture/mouth_open",
-                                                 x_pos=20, y_pos=190,
+                                                 x_pos=20, y_pos=230,
                                                  text_color=Colors.RED)
 
             self.__detect_and_print_text_gesture(image=image,
-                                                 gesture_name='EB-Raised',
-                                                 gesture_dict=self.gestures_dict['eyebrows'],
-                                                 topic="gesture/eyebrows_raised",
-                                                 x_pos=20, y_pos=230,
-                                                 text_color=Colors.PURPLE)
+                                                 gesture_name='M-Left',
+                                                 gesture_dict=self.gestures_dict['mouth_left'],
+                                                 topic="gesture/mouth_left",
+                                                 x_pos=20, y_pos=270,
+                                                 text_color=Colors.YELLOW)
+
+            self.__detect_and_print_text_gesture(image=image,
+                                                 gesture_name='M-Right',
+                                                 gesture_dict=self.gestures_dict['mouth_right'],
+                                                 topic="gesture/mouth_right",
+                                                 x_pos=20, y_pos=310,
+                                                 text_color=Colors.YELLOW)
 
         # Get the end time and calculate the total time
         end_time = time.time()
@@ -182,7 +212,10 @@ class ImageProcessor:
         image = fill_poly_trans(image, [mesh_cords[p] for p in LandmarkPoints.LEFT_EYEBROW], Colors.ORANGE, opacity=0.4)
         image = fill_poly_trans(image, [mesh_cords[p] for p in LandmarkPoints.RIGHT_EYEBROW], Colors.ORANGE, opacity=0.4)
         image = fill_poly_trans(image, [mesh_cords[p] for p in LandmarkPoints.LIPS], Colors.BLACK, opacity=0.3)
-        # cv2.circle(image, mesh_cords[LandmarkPoints.NOSE_POINT], 2, Colors.WHITE, -1)
+        cv2.circle(image, mesh_cords[LandmarkPoints.NOSE_POINT], 2, Colors.WHITE, -1)
+        cv2.circle(image, mesh_cords[LandmarkPoints.NOSE_UNDER_POINT], 2, Colors.RED, -1)
+        cv2.circle(image, mesh_cords[LandmarkPoints.LIP_LEFT], 2, Colors.WHITE, -1)
+        cv2.circle(image, mesh_cords[LandmarkPoints.LIP_RIGHT], 2, Colors.WHITE, -1)
 
         return image
 
@@ -261,13 +294,42 @@ class ImageProcessor:
 
     def __raised_eyebrows(self, landmarks):
         left_eyebrow_to_eye_distance = euclidean_distance(landmarks[LandmarkPoints.LEFT_EYE_VERTICAL_TOP],
-                                                          landmarks[LandmarkPoints.LEFT_EYEBROW_LOWER_MIDPOINT])
-
+                                                          landmarks[LandmarkPoints.LEFT_EYEBROW_UPPER_MIDPOINT])
         right_eyebrow_to_eye_distance = euclidean_distance(landmarks[LandmarkPoints.RIGHT_EYE_VERTICAL_TOP],
-                                                           landmarks[LandmarkPoints.RIGHT_EYEBROW_LOWER_MIDPOINT])
+                                                           landmarks[LandmarkPoints.RIGHT_EYEBROW_UPPER_MIDPOINT])
 
-        threshold = 25
+        left_eyebrow_to_face_top_distance = euclidean_distance(landmarks[LandmarkPoints.FACE_TOP_LEFT_EYEBROW],
+                                                      landmarks[LandmarkPoints.LEFT_EYEBROW_UPPER_MIDPOINT])
+        right_eyebrow_to_face_top_distance = euclidean_distance(landmarks[LandmarkPoints.FACE_TOP_RIGHT_EYEBROW],
+                                                       landmarks[LandmarkPoints.RIGHT_EYEBROW_UPPER_MIDPOINT])
 
-        self.gestures_dict['eyebrows']['detected'] = left_eyebrow_to_eye_distance > threshold or \
-                                                     right_eyebrow_to_eye_distance > threshold
-        self.gestures_dict['eyebrows']['ratio'] = max(left_eyebrow_to_eye_distance, right_eyebrow_to_eye_distance)
+        ratio_left = left_eyebrow_to_face_top_distance / left_eyebrow_to_eye_distance
+        ratio_right = right_eyebrow_to_face_top_distance / right_eyebrow_to_eye_distance
+
+        ratio = max(ratio_left, ratio_right)
+
+        threshold = 1
+
+        self.gestures_dict['eyebrows_raised']['detected'] = ratio < threshold
+        self.gestures_dict['eyebrows_raised']['ratio'] = ratio
+
+    def __mouth_side(self, landmarks, is_right_side=True):
+        mouth_top_to_nose = euclidean_distance(landmarks[LandmarkPoints.UPPER_LIPS_TOP],
+                                               landmarks[LandmarkPoints.NOSE_UNDER_POINT])
+
+        mouth_side_to_middle = euclidean_distance(
+            landmarks[LandmarkPoints.UPPER_LIPS_TOP],
+            landmarks[LandmarkPoints.LIP_RIGHT if is_right_side else LandmarkPoints.LIP_LEFT])
+
+        ratio = mouth_top_to_nose / mouth_side_to_middle
+        threshold = 0.55
+
+        self.gestures_dict['mouth_right' if is_right_side else 'mouth_left']['detected'] = \
+            ratio < threshold and not self.gestures_dict['mouth_open']['detected']
+        self.gestures_dict['mouth_right' if is_right_side else 'mouth_left']['ratio'] = ratio
+
+    def __mouth_left(self, landmarks):
+        self.__mouth_side(landmarks, is_right_side=False)
+
+    def __mouth_right(self, landmarks):
+        self.__mouth_side(landmarks, is_right_side=True)

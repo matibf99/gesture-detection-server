@@ -70,6 +70,13 @@ class ImageProcessor:
                 'ratio': 0,
                 'sent': False,
             },
+            'mouth_kiss': {
+                'last': 0,
+                'previous_detected': False,
+                'detected': False,
+                'ratio': 0,
+                'sent': False,
+            },
             'mouth_right': {
                 'last': 0,
                 'previous_detected': False,
@@ -149,6 +156,7 @@ class ImageProcessor:
             self.__blink_right_eye(mesh_cords)
             self.__raised_eyebrows(mesh_cords)
             self.__mouth_open(mesh_cords)
+            self.__mouth_kiss(mesh_cords)
             self.__mouth_left(mesh_cords)
             self.__mouth_right(mesh_cords)
 
@@ -181,17 +189,24 @@ class ImageProcessor:
                                                  text_color=Colors.RED)
 
             self.__detect_and_print_text_gesture(image=image,
+                                                 gesture_name='M-Kiss',
+                                                 gesture_dict=self.gestures_dict['mouth_kiss'],
+                                                 topic="gesture/mouth_kiss",
+                                                 x_pos=20, y_pos=270,
+                                                 text_color=Colors.RED)
+
+            self.__detect_and_print_text_gesture(image=image,
                                                  gesture_name='M-Left',
                                                  gesture_dict=self.gestures_dict['mouth_left'],
                                                  topic="gesture/mouth_left",
-                                                 x_pos=20, y_pos=270,
+                                                 x_pos=20, y_pos=310,
                                                  text_color=Colors.YELLOW)
 
             self.__detect_and_print_text_gesture(image=image,
                                                  gesture_name='M-Right',
                                                  gesture_dict=self.gestures_dict['mouth_right'],
                                                  topic="gesture/mouth_right",
-                                                 x_pos=20, y_pos=310,
+                                                 x_pos=20, y_pos=350,
                                                  text_color=Colors.YELLOW)
 
         # Get the end time and calculate the total time
@@ -206,23 +221,23 @@ class ImageProcessor:
         return image
 
     def __draw_landmarks(self, image, mesh_cords):
-        # image = fillPolyTrans(image, [mesh_cords[p] for p in LandmarkPoints.FACE_OVAL], Colors.WHITE, opacity=0.4)
+        image = fill_poly_trans(image, [mesh_cords[p] for p in LandmarkPoints.FACE_OVAL], Colors.WHITE, opacity=0.4)
         image = fill_poly_trans(image, [mesh_cords[p] for p in LandmarkPoints.LEFT_EYE], Colors.GREEN, opacity=0.4)
         image = fill_poly_trans(image, [mesh_cords[p] for p in LandmarkPoints.RIGHT_EYE], Colors.RED, opacity=0.4)
-        image = fill_poly_trans(image, [mesh_cords[p] for p in LandmarkPoints.LEFT_EYEBROW], Colors.ORANGE, opacity=0.4)
-        image = fill_poly_trans(image, [mesh_cords[p] for p in LandmarkPoints.RIGHT_EYEBROW], Colors.ORANGE, opacity=0.4)
+        image = fill_poly_trans(image, [mesh_cords[p] for p in LandmarkPoints.LEFT_EYEBROW], Colors.GREEN, opacity=0.4)
+        image = fill_poly_trans(image, [mesh_cords[p] for p in LandmarkPoints.RIGHT_EYEBROW], Colors.RED, opacity=0.4)
         image = fill_poly_trans(image, [mesh_cords[p] for p in LandmarkPoints.LIPS], Colors.BLACK, opacity=0.3)
         cv2.circle(image, mesh_cords[LandmarkPoints.NOSE_POINT], 2, Colors.WHITE, -1)
         cv2.circle(image, mesh_cords[LandmarkPoints.NOSE_UNDER_POINT], 2, Colors.RED, -1)
-        cv2.circle(image, mesh_cords[LandmarkPoints.LIP_LEFT], 2, Colors.WHITE, -1)
-        cv2.circle(image, mesh_cords[LandmarkPoints.LIP_RIGHT], 2, Colors.WHITE, -1)
+        cv2.circle(image, mesh_cords[LandmarkPoints.LIP_LEFT], 2, Colors.RED, -1)
+        cv2.circle(image, mesh_cords[LandmarkPoints.LIP_RIGHT], 2, Colors.RED, -1)
 
         return image
 
     def __detect_and_print_text_gesture(self, image, gesture_name, gesture_dict, topic, x_pos, y_pos,
                                         text_color=Colors.BLACK):
         cv2.putText(image, f'{gesture_name} - Y - {round(gesture_dict["ratio"], 2)}' if gesture_dict["detected"]
-                    else f'{gesture_name} - N - {round(gesture_dict["ratio"], 2)}', (x_pos, y_pos),
+        else f'{gesture_name} - N - {round(gesture_dict["ratio"], 2)}', (x_pos, y_pos),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, text_color, 2)
 
         if gesture_dict['detected'] != gesture_dict['previous_detected']:
@@ -284,13 +299,32 @@ class ImageProcessor:
                                           landmarks[LandmarkPoints.LOWER_LIPS_BOTTOM])
         mouth_width = euclidean_distance(landmarks[LandmarkPoints.LIP_LEFT], landmarks[LandmarkPoints.LIP_RIGHT])
 
-        if mouth_height > 0:
-            ratio = mouth_width / mouth_height
-        else:
-            ratio = -1
+        lip_height = euclidean_distance(landmarks[LandmarkPoints.UPPER_LIPS_TOP],
+                                        landmarks[LandmarkPoints.UPPER_LIPS_BOTTOM])
+        mouth_cavity_height = euclidean_distance(landmarks[LandmarkPoints.UPPER_LIPS_BOTTOM],
+                                                 landmarks[LandmarkPoints.LOWER_LIPS_TOP])
 
-        self.gestures_dict['mouth_open']['detected'] = ratio < 2
-        self.gestures_dict['mouth_open']['ratio'] = ratio
+        ratio_mouth = mouth_width / mouth_height
+        ratio_open = mouth_cavity_height / lip_height
+
+        self.gestures_dict['mouth_open']['detected'] = ratio_mouth < 2 and ratio_open > 3
+        self.gestures_dict['mouth_open']['ratio'] = ratio_mouth
+
+    def __mouth_kiss(self, landmarks):
+        mouth_height = euclidean_distance(landmarks[LandmarkPoints.UPPER_LIPS_TOP],
+                                          landmarks[LandmarkPoints.LOWER_LIPS_BOTTOM])
+        mouth_width = euclidean_distance(landmarks[LandmarkPoints.LIP_LEFT], landmarks[LandmarkPoints.LIP_RIGHT])
+
+        lip_height = euclidean_distance(landmarks[LandmarkPoints.UPPER_LIPS_TOP],
+                                        landmarks[LandmarkPoints.UPPER_LIPS_BOTTOM])
+        mouth_cavity_height = euclidean_distance(landmarks[LandmarkPoints.UPPER_LIPS_BOTTOM],
+                                                 landmarks[LandmarkPoints.LOWER_LIPS_TOP])
+
+        ratio_mouth = mouth_width / mouth_height
+        ratio_open = mouth_cavity_height / lip_height
+
+        self.gestures_dict['mouth_kiss']['detected'] = ratio_mouth < 2 and ratio_open < 3
+        self.gestures_dict['mouth_kiss']['ratio'] = ratio_mouth
 
     def __raised_eyebrows(self, landmarks):
         left_eyebrow_to_eye_distance = euclidean_distance(landmarks[LandmarkPoints.LEFT_EYE_VERTICAL_TOP],
@@ -299,9 +333,9 @@ class ImageProcessor:
                                                            landmarks[LandmarkPoints.RIGHT_EYEBROW_UPPER_MIDPOINT])
 
         left_eyebrow_to_face_top_distance = euclidean_distance(landmarks[LandmarkPoints.FACE_TOP_LEFT_EYEBROW],
-                                                      landmarks[LandmarkPoints.LEFT_EYEBROW_UPPER_MIDPOINT])
+                                                               landmarks[LandmarkPoints.LEFT_EYEBROW_UPPER_MIDPOINT])
         right_eyebrow_to_face_top_distance = euclidean_distance(landmarks[LandmarkPoints.FACE_TOP_RIGHT_EYEBROW],
-                                                       landmarks[LandmarkPoints.RIGHT_EYEBROW_UPPER_MIDPOINT])
+                                                                landmarks[LandmarkPoints.RIGHT_EYEBROW_UPPER_MIDPOINT])
 
         ratio_left = left_eyebrow_to_face_top_distance / left_eyebrow_to_eye_distance
         ratio_right = right_eyebrow_to_face_top_distance / right_eyebrow_to_eye_distance
@@ -322,7 +356,7 @@ class ImageProcessor:
             landmarks[LandmarkPoints.LIP_RIGHT if is_right_side else LandmarkPoints.LIP_LEFT])
 
         ratio = mouth_top_to_nose / mouth_side_to_middle
-        threshold = 0.55
+        threshold = 0.6
 
         self.gestures_dict['mouth_right' if is_right_side else 'mouth_left']['detected'] = \
             ratio < threshold and not self.gestures_dict['mouth_open']['detected']
